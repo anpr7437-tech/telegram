@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Workout Mini App</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+
+<style>
+body {
+  margin: 0;
+  background: black;
+  color: white;
+  font-family: system-ui;
+  overflow: hidden;
+}
+
+/* ===== DASHBOARD ===== */
+#dashboard {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+}
+
+.bigBtn {
+  width: 240px;
+  height: 80px;
+  border-radius: 20px;
+  font-size: 22px;
+  font-weight: 900;
+  border: none;
+}
+
+.green { background: #2ecc71; color: black; }
+.gray { background: #444; color: white; }
+
+/* ===== HEADER BALANCE ===== */
+#header {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  z-index: 20;
+  font-size: 32px;
+  font-weight: 900;
+  background: rgba(0,0,0,0.65);
+  padding: 16px 22px;
+  border-radius: 20px;
+  backdrop-filter: blur(8px);
+}
+
+/* ===== +50 ===== */
+.plus {
+  position: fixed;
+  font-size: 56px;
+  font-weight: 900;
+  color: #2ecc71;
+  padding: 12px 22px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.25);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 15;
+}
+
+/* ===== TRAINING ===== */
+#training { display: none; }
+
+video {
+  display: none;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+#loadingScreen {
+  position: fixed;
+  inset: 0;
+  background: black;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+}
+
+#box {
+  background: rgba(0,0,0,0.75);
+  padding: 28px;
+  border-radius: 24px;
+  text-align: center;
+}
+
+#text {
+  font-size: 26px;
+  font-weight: 800;
+  white-space: pre-line;
+}
+
+#counter {
+  font-size: 72px;
+  margin-top: 12px;
+  display: none;
+}
+
+#finishBtn {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: none;
+  background: #ff5c5c;
+  color: white;
+  font-weight: bold;
+  z-index: 10;
+}
+
+/* ===== SHOP ===== */
+#shop {
+  display: none;
+  padding: 20px;
+}
+
+.shop-item {
+  background: #222;
+  padding: 16px;
+  border-radius: 16px;
+  margin-bottom: 12px;
+}
+
+.shop-item button {
+  margin-top: 8px;
+  padding: 10px;
+  width: 100%;
+  border-radius: 10px;
+  border: none;
+  font-weight: 800;
+}
+</style>
+</head>
+
+<body>
+
+<div id="header">💰 <span id="balance">0</span></div>
+
+<!-- DASHBOARD -->
+<div id="dashboard">
+  <div style="font-size:40px;font-weight:900;">
+    💰 <span id="balanceDash">0</span>
+  </div>
+
+  <button class="bigBtn green" id="startTraining">
+    🏋️ Начать тренировку
+  </button>
+
+  <button class="bigBtn gray" id="openShop">
+    🛒 Магазин
+  </button>
+</div>
+
+<!-- TRAINING -->
+<div id="training">
+  <div id="loadingScreen">Подключаемся к камере…</div>
+  <video id="video" playsinline muted></video>
+
+  <div id="overlay">
+    <div id="box">
+      <div id="text"></div>
+      <div id="counter">0</div>
+    </div>
+  </div>
+
+  <button id="finishBtn">Закончить</button>
+</div>
+
+<!-- SHOP -->
+<div id="shop">
+  <h2>🛒 Магазин</h2>
+  <div id="shopList"></div>
+  <button class="bigBtn gray" id="backFromShop">← Назад</button>
+</div>
+
+<script>
+const tg = window.Telegram.WebApp;
+tg.expand();
+
+const COINS_PER_SQUAT = 50;
+let balance = Number(localStorage.getItem('balance') || 0);
+
+const dashboard = document.getElementById('dashboard');
+const training = document.getElementById('training');
+const shop = document.getElementById('shop');
+
+const video = document.getElementById('video');
+const loadingScreen = document.getElementById('loadingScreen');
+const overlay = document.getElementById('overlay');
+const text = document.getElementById('text');
+const counterEl = document.getElementById('counter');
+
+function updateBalance() {
+  document.getElementById('balance').innerText = balance;
+  document.getElementById('balanceDash').innerText = balance;
+}
+updateBalance();
+
+function show(screen) {
+  dashboard.style.display = screen === 'dashboard' ? 'flex' : 'none';
+  training.style.display = screen === 'training' ? 'block' : 'none';
+  shop.style.display = screen === 'shop' ? 'block' : 'none';
+}
+
+/* ===== SHOP ===== */
+const items = [
+  { id:'glasses', name:'Очки 😎', price:1000 },
+  { id:'shorts', name:'Шорты 🩳', price:2000 },
+  { id:'cap', name:'Шапка 🧢', price:5000 },
+  { id:'shoes', name:'Кроссовки 👟', price:8000 },
+];
+let owned = JSON.parse(localStorage.getItem('owned')||'[]');
+
+function renderShop() {
+  shopList.innerHTML = '';
+  items.forEach(i=>{
+    const bought = owned.includes(i.id);
+    const btn = bought ? 'Куплено' : 'Купить';
+    const dis = bought || balance < i.price ? 'disabled' : '';
+    shopList.innerHTML += `
+      <div class="shop-item">
+        <div>${i.name}</div>
+        <div>${i.price} 💰</div>
+        <button ${dis} onclick="buy('${i.id}')">${btn}</button>
+      </div>`;
+  });
+}
+
+function buy(id){
+  const item = items.find(i=>i.id===id);
+  balance -= item.price;
+  owned.push(id);
+  localStorage.setItem('balance',balance);
+  localStorage.setItem('owned',JSON.stringify(owned));
+  updateBalance();
+  renderShop();
+}
+
+/* ===== BUTTONS ===== */
+startTraining.onclick = async ()=>{
+  show('training');
+  const stream = await navigator.mediaDevices.getUserMedia({video:true});
+  video.srcObject = stream;
+  video.play();
+};
+
+openShop.onclick = ()=>{
+  show('shop');
+  renderShop();
+};
+
+backFromShop.onclick = ()=>show('dashboard');
+finishBtn.onclick = ()=>show('dashboard');
+
+/* ===== POSE LOGIC (ТВОЯ, НЕ МЕНЯЛ) ===== */
+let detector, reps=0, baseY=null, stableFrames=0, lastHipY=null;
+let phase='PREP', state='UP', cooldownTime=0;
+const DOWN_OFFSET=25, UP_OFFSET=10, COOLDOWN_MS=700;
+const STABLE_DELTA=6, STABLE_FRAMES_REQUIRED=60;
+
+video.onplaying = async ()=>{
+  loadingScreen.style.display='none';
+  overlay.style.display='flex';
+  detector = await poseDetection.createDetector(
+    poseDetection.SupportedModels.MoveNet,
+    { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+  );
+  requestAnimationFrame(loop);
+};
+
+function loop(ts){
+  detector.estimatePoses(video).then(p=>{
+    if(!p.length)return requestAnimationFrame(loop);
+    const kp=p[0].keypoints;
+    const lh=kp.find(k=>k.name==='left_hip');
+    const rh=kp.find(k=>k.name==='right_hip');
+    if(!lh||!rh||lh.score<0.4||rh.score<0.4)
+      return requestAnimationFrame(loop);
+    const hipY=(lh.y+rh.y)/2;
+
+    if(phase==='PREP'){
+      if(baseY===null)baseY=hipY;
+      baseY=baseY*0.95+hipY*0.05;
+      if(lastHipY!==null&&Math.abs(hipY-lastHipY)<STABLE_DELTA)stableFrames++;
+      else stableFrames=0;
+      if(stableFrames>=STABLE_FRAMES_REQUIRED){
+        phase='TRAIN';
+        text.innerText='Можешь начинать 💪';
+        counterEl.style.display='block';
+      }
+      lastHipY=hipY;
+      return requestAnimationFrame(loop);
+    }
+
+    if(state==='UP'&&hipY>baseY+DOWN_OFFSET)state='DOWN';
+    else if(state==='DOWN'&&hipY<baseY+UP_OFFSET){
+      reps++;
+      counterEl.innerText=reps;
+      balance+=COINS_PER_SQUAT;
+      localStorage.setItem('balance',balance);
+      updateBalance();
+      state='COOLDOWN';
+      cooldownTime=ts;
+    }
+    else if(state==='COOLDOWN'&&ts-cooldownTime>COOLDOWN_MS)state='UP';
+
+    requestAnimationFrame(loop);
+  });
+}
+
+show('dashboard');
+</script>
+</body>
+</html>
