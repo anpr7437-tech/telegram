@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Squat Test</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+
+<style>
+body {
+  margin: 0;
+  background: black;
+  color: white;
+  font-family: system-ui;
+  overflow: hidden;
+  text-align: center;
+}
+
+video {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+}
+
+#box {
+  background: rgba(0,0,0,0.7);
+  padding: 28px;
+  border-radius: 24px;
+  max-width: 90%;
+}
+
+#text {
+  font-size: 24px;
+  font-weight: 800;
+  white-space: pre-line;
+}
+
+#counter {
+  font-size: 72px;
+  margin-top: 12px;
+  display: none;
+}
+</style>
+</head>
+
+<body>
+
+<video id="video" playsinline muted></video>
+
+<div id="overlay">
+  <div id="box">
+    <div id="text">Подключаемся к камере…</div>
+    <div id="counter">0</div>
+  </div>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const text = document.getElementById('text');
+const counterEl = document.getElementById('counter');
+
+let detector;
+let reps = 0;
+
+let baseY = null;
+let stableFrames = 0;
+let lastHipY = null;
+let phase = 'PREP';
+let state = 'UP';
+let cooldownTime = 0;
+
+const DOWN_OFFSET = 25;
+const UP_OFFSET = 10;
+const COOLDOWN_MS = 700;
+const STABLE_DELTA = 6;
+const STABLE_FRAMES_REQUIRED = 60;
+
+(async () => {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+  video.srcObject = stream;
+  await video.play();
+
+  text.innerText =
+    'Поставь телефон так, чтобы мы видели тебя во весь рост\n' +
+    'И подожди 3–5 секунд';
+
+  detector = await poseDetection.createDetector(
+    poseDetection.SupportedModels.MoveNet,
+    { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+  );
+
+  requestAnimationFrame(loop);
+})();
+
+function loop(ts) {
+  detector.estimatePoses(video).then(poses => {
+    if (!poses.length) return requestAnimationFrame(loop);
+
+    const kp = poses[0].keypoints;
+    const lh = kp.find(p => p.name === 'left_hip');
+    const rh = kp.find(p => p.name === 'right_hip');
+
+    if (!lh || !rh || lh.score < 0.4 || rh.score < 0.4)
+      return requestAnimationFrame(loop);
+
+    const hipY = (lh.y + rh.y) / 2;
+
+    /* ===== КАЛИБРОВКА ===== */
+    if (phase === 'PREP') {
+      if (baseY === null) baseY = hipY;
+      baseY = baseY * 0.95 + hipY * 0.05;
+
+      if (lastHipY !== null && Math.abs(hipY - lastHipY) < STABLE_DELTA)
+        stableFrames++;
+      else
+        stableFrames = 0;
+
+      if (stableFrames >= STABLE_FRAMES_REQUIRED) {
+        phase = 'TEST';
+        text.innerText = 'Отлично 👍\nТеперь сделай 1 тестовый присед';
+        counterEl.style.display = 'block';
+        counterEl.innerText = 0;
+      }
+
+      lastHipY = hipY;
+      return requestAnimationFrame(loop);
+    }
+
+    /* ===== СЧЁТ ПРИСЕДАНИЙ ===== */
+    if (state === 'UP' && hipY > baseY + DOWN_OFFSET) {
+      state = 'DOWN';
+    }
+    else if (state === 'DOWN' && hipY < baseY + UP_OFFSET) {
+      reps++;
+      counterEl.innerText = reps;
+      state = 'COOLDOWN';
+      cooldownTime = ts;
+    }
+    else if (state === 'COOLDOWN' && ts - cooldownTime > COOLDOWN_MS) {
+      state = 'UP';
+    }
+
+    requestAnimationFrame(loop);
+  });
+}
+</script>
+
+</body>
+</html>
