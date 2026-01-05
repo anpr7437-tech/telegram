@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Pose Debug</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+
+<style>
+body {
+  margin: 0;
+  background: black;
+  color: white;
+  font-family: system-ui;
+  overflow: hidden;
+}
+
+video {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+canvas {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+#status {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.7);
+  padding: 12px 20px;
+  border-radius: 14px;
+  font-size: 16px;
+  z-index: 10;
+}
+</style>
+</head>
+
+<body>
+
+<video id="video" playsinline muted></video>
+<canvas id="canvas"></canvas>
+<div id="status">Инициализация…</div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+
+let detector;
+
+async function init() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+    await video.play();
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    statusEl.innerText = 'Загружаем модель…';
+
+    detector = await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+    );
+
+    statusEl.innerText = 'Модель загружена. Ожидание позы…';
+    requestAnimationFrame(loop);
+
+  } catch (e) {
+    statusEl.innerText = 'Ошибка: ' + e.message;
+  }
+}
+
+function loop() {
+  detector.estimatePoses(video).then(poses => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!poses.length) {
+      statusEl.innerText = 'Поза не обнаружена';
+      requestAnimationFrame(loop);
+      return;
+    }
+
+    statusEl.innerText = 'Поза обнаружена';
+
+    const kp = poses[0].keypoints;
+
+    kp.forEach(p => {
+      if (p.score > 0.3) {
+        const x = canvas.width - (p.x * canvas.width / video.videoWidth);
+        const y = p.y * canvas.height / video.videoHeight;
+
+        ctx.beginPath();
+        ctx.arc(x, y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'red';
+        ctx.fill();
+      }
+    });
+
+    requestAnimationFrame(loop);
+  });
+}
+
+init();
+</script>
+
+</body>
+</html>
