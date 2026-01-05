@@ -18,16 +18,49 @@ body {
   overflow: hidden;
 }
 
-/* HEADER */
+/* ===== BALANCE HUD ===== */
 #header {
   position: fixed;
   top: 12px;
   right: 16px;
-  font-weight: bold;
-  z-index: 10;
+  z-index: 20;
+  font-size: 22px;
+  font-weight: 800;
+  background: rgba(0,0,0,0.6);
+  padding: 10px 16px;
+  border-radius: 14px;
+  backdrop-filter: blur(6px);
 }
 
-/* HOME */
+/* ===== FLOATING +50 ===== */
+.plus {
+  position: fixed;
+  left: 50%;
+  top: 55%;
+  transform: translateX(-50%);
+  font-size: 28px;
+  font-weight: 800;
+  color: #2ecc71;
+  pointer-events: none;
+  animation: fly 1.2s ease-out forwards;
+  z-index: 15;
+}
+
+@keyframes fly {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0) scale(0.8);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(200px, -200px) scale(1.2);
+  }
+}
+
+/* ===== HOME ===== */
 #home {
   display: flex;
   height: 100vh;
@@ -46,7 +79,7 @@ body {
   border: none;
 }
 
-/* TRAINING */
+/* ===== TRAINING ===== */
 #training {
   display: none;
 }
@@ -73,7 +106,6 @@ video {
 #loadingText {
   font-size: 28px;
   font-weight: 800;
-  text-align: center;
 }
 
 #overlay {
@@ -113,7 +145,6 @@ video {
   background: #ff5c5c;
   color: white;
   font-weight: bold;
-  display: none;
   z-index: 10;
 }
 </style>
@@ -125,12 +156,10 @@ video {
   💰 <span id="balance">0</span>
 </div>
 
-<!-- HOME -->
 <div id="home">
   <button id="startHome">НАЧАТЬ<br>ТРЕНИРОВКУ</button>
 </div>
 
-<!-- TRAINING -->
 <div id="training">
   <div id="loadingScreen">
     <div id="loadingText">Подключаемся к камере…</div>
@@ -175,7 +204,6 @@ const finishBtn = document.getElementById('finishBtn');
 /* ===== ТВОЯ ИСХОДНАЯ ЛОГИКА ===== */
 let detector;
 let reps = 0;
-let earnedCoins = 0;
 let baseY = null;
 let stableFrames = 0;
 let lastHipY = null;
@@ -216,6 +244,14 @@ startHome.onclick = async () => {
   };
 };
 
+function spawnPlus() {
+  const el = document.createElement('div');
+  el.className = 'plus';
+  el.innerText = '+50';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1200);
+}
+
 function loop(ts) {
   detector.estimatePoses(video).then(poses => {
     if (!poses.length) return requestAnimationFrame(loop);
@@ -251,8 +287,11 @@ function loop(ts) {
     }
     else if (state === 'DOWN' && hipY < baseY + UP_OFFSET) {
       reps++;
-      earnedCoins += COINS_PER_SQUAT;
       counterEl.innerText = reps;
+
+      balance += COINS_PER_SQUAT;
+      balanceEl.innerText = balance;
+      spawnPlus();
 
       if (phase === 'TEST') {
         phase = 'TRAIN';
@@ -270,15 +309,10 @@ function loop(ts) {
   });
 }
 
-/* ===== ЗАВЕРШЕНИЕ ===== */
 finishBtn.onclick = () => {
-  balance += earnedCoins;
   localStorage.setItem('balance', balance);
-  balanceEl.innerText = balance;
 
-  // сброс
   reps = 0;
-  earnedCoins = 0;
   baseY = null;
   stableFrames = 0;
   lastHipY = null;
