@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Squat Hybrid Test</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body {
+  margin: 0;
+  background: black;
+  color: white;
+  font-family: system-ui;
+  overflow: hidden;
+  text-align: center;
+}
+
+/* ===== SCREENS ===== */
+.screen {
+  position: fixed;
+  inset: 0;
+  display: none;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+}
+
+.screen.active {
+  display: flex;
+}
+
+/* ===== BUTTONS ===== */
+button {
+  width: 260px;
+  padding: 18px;
+  margin: 12px;
+  font-size: 20px;
+  font-weight: bold;
+  border-radius: 16px;
+  border: none;
+}
+
+.ios {
+  background: #2ecc71;
+  color: black;
+}
+
+.android {
+  background: #3498db;
+  color: white;
+}
+
+/* ===== COUNTER ===== */
+#counter {
+  font-size: 96px;
+  font-weight: 900;
+  margin-top: 20px;
+}
+
+/* ===== INFO ===== */
+#mode {
+  margin-top: 12px;
+  font-size: 18px;
+  opacity: 0.8;
+}
+</style>
+</head>
+
+<body>
+
+<!-- ===== PLATFORM SELECT ===== -->
+<div id="selectScreen" class="screen active">
+  <h1>Выбери режим</h1>
+  <button class="ios" onclick="startIOS()">🍎 iOS (локально)</button>
+  <button class="android" onclick="startAndroid()">🤖 Android (через сервер)</button>
+</div>
+
+<!-- ===== TRAINING ===== -->
+<div id="trainingScreen" class="screen">
+  <div id="counter">0</div>
+  <div id="mode"></div>
+</div>
+
+<script>
+let reps = 0;
+let mode = '';
+
+const selectScreen = document.getElementById('selectScreen');
+const trainingScreen = document.getElementById('trainingScreen');
+const counterEl = document.getElementById('counter');
+const modeEl = document.getElementById('mode');
+
+/* ===== IOS MODE (FAKE LOCAL) ===== */
+function startIOS() {
+  mode = 'iOS (локально)';
+  startTraining(fakeLocalCounter);
+}
+
+/* ===== ANDROID MODE (MOCK SERVER) ===== */
+function startAndroid() {
+  mode = 'Android (mock сервер)';
+  startTraining(mockServerCounter);
+}
+
+/* ===== START ===== */
+function startTraining(counterFn) {
+  selectScreen.classList.remove('active');
+  trainingScreen.classList.add('active');
+  modeEl.innerText = mode;
+
+  // каждые 2 секунды "проверяем присед"
+  setInterval(async () => {
+    const rep = await counterFn();
+    if (rep) {
+      reps++;
+      counterEl.innerText = reps;
+    }
+  }, 2000);
+}
+
+/* ===== FAKE LOCAL AI ===== */
+function fakeLocalCounter() {
+  // имитация: раз в 2–4 сек "присед"
+  return new Promise(resolve => {
+    setTimeout(() => {
+      resolve(Math.random() > 0.4);
+    }, 200);
+  });
+}
+
+/* ===== MOCK SERVER ===== */
+function mockServerCounter() {
+  return new Promise(resolve => {
+    // имитация задержки сервера
+    setTimeout(() => {
+      // сервер "иногда" видит присед
+      resolve(Math.random() > 0.6);
+    }, 500);
+  });
+}
+</script>
+
+</body>
+</html>
