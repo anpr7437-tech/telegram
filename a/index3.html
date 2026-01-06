@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Workout Mini App</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+<style>
+body {
+  margin: 0;
+  background: black;
+  color: white;
+  font-family: system-ui;
+  overflow: hidden;
+}
+#header {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  z-index: 20;
+  font-size: 32px;
+  font-weight: 900;
+  background: rgba(0,0,0,0.65);
+  padding: 16px 22px;
+  border-radius: 20px;
+  backdrop-filter: blur(8px);
+}
+.plus {
+  position: fixed;
+  font-size: 56px;
+  font-weight: 900;
+  color: #2ecc71;
+  padding: 12px 22px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.25);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 15;
+  text-shadow:
+    0 0 12px rgba(46,204,113,1),
+    0 0 32px rgba(46,204,113,0.7);
+}
+#home {
+  display: flex;
+  height: 100vh;
+  justify-content: center;
+  align-items: center;
+}
+#startHome {
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: #2ecc71;
+  color: black;
+  font-size: 22px;
+  font-weight: bold;
+  border: none;
+}
+#training { display: none; }
+video {
+  display: none;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+#glasses {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9;
+  display: none;
+  transform: scaleX(-1);
+  transform-origin: center center;
+}
+#loadingScreen {
+  position: fixed;
+  inset: 0;
+  background: black;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+#loadingText {
+  font-size: 28px;
+  font-weight: 800;
+}
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+}
+#box {
+  background: rgba(0,0,0,0.75);
+  padding: 28px;
+  border-radius: 24px;
+  text-align: center;
+}
+#text {
+  font-size: 26px;
+  font-weight: 800;
+  white-space: pre-line;
+}
+#counter {
+  font-size: 72px;
+  margin-top: 12px;
+  display: none;
+}
+#finishBtn {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: none;
+  background: #ff5c5c;
+  color: white;
+  font-weight: bold;
+  z-index: 10;
+}
+</style>
+</head>
+<body>
+
+<div id="header">💰 <span id="balance">0</span></div>
+
+<div id="home">
+  <button id="startHome">НАЧАТЬ<br>ТРЕНИРОВКУ</button>
+</div>
+
+<div id="training">
+  <div id="loadingScreen">
+    <div id="loadingText">Подключаемся к камере…</div>
+  </div>
+
+  <video id="video" playsinline muted></video>
+  <img id="glasses" src="glasses.png">
+
+  <div id="overlay">
+    <div id="box">
+      <div id="text"></div>
+      <div id="counter">0</div>
+    </div>
+  </div>
+
+  <button id="finishBtn">Закончить тренировку</button>
+</div>
+
+<script>
+const tg = window.Telegram.WebApp;
+tg.expand();
+
+const COINS_PER_SQUAT = 50;
+let balance = Number(localStorage.getItem('balance') || 0);
+document.getElementById('balance').innerText = balance;
+
+const home = document.getElementById('home');
+const training = document.getElementById('training');
+const startHome = document.getElementById('startHome');
+const video = document.getElementById('video');
+const glasses = document.getElementById('glasses');
+const loadingScreen = document.getElementById('loadingScreen');
+const overlay = document.getElementById('overlay');
+const text = document.getElementById('text');
+const counterEl = document.getElementById('counter');
+const finishBtn = document.getElementById('finishBtn');
+
+let detector;
+let reps = 0;
+let baseY = null;
+let stableFrames = 0;
+let lastHipY = null;
+let phase = 'PREP';
+let state = 'UP';
+let cooldownTime = 0;
+
+const DOWN_OFFSET = 25;
+const UP_OFFSET = 10;
+const COOLDOWN_MS = 700;
+const STABLE_DELTA = 6;
+const STABLE_FRAMES_REQUIRED = 60;
+
+startHome.onclick = async () => {
+  home.style.display = 'none';
+  training.style.display = 'block';
+
+  const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+  video.srcObject = stream;
+  video.play();
+
+  video.onplaying = async () => {
+    loadingScreen.style.display = 'none';
+    video.style.display = 'block';
+    overlay.style.display = 'flex';
+    glasses.style.display = 'block';
+
+    text.innerText =
+      'Поставь телефон так, чтобы мы видели тебя во весь рост\nИ подожди 3–5 секунд';
+
+    detector = await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+    );
+
+    requestAnimationFrame(loop);
+  };
+};
+
+function spawnPlus(hipY) {
+  const el = document.createElement('div');
+  el.className = 'plus';
+  el.innerText = '+50';
+  document.body.appendChild(el);
+
+  const startX = window.innerWidth / 2;
+  const startY = hipY - 60;
+  const dir = Math.random() < 0.5 ? -1 : 1;
+  const drift = 120 + Math.random() * 80;
+  const rise = 140;
+  const duration = 1100;
+  let startTime = null;
+
+  function animate(t) {
+    if (!startTime) startTime = t;
+    const p = Math.min((t - startTime) / duration, 1);
+    const ease = p * (2 - p);
+    el.style.left = startX + dir * drift * ease + 'px';
+    el.style.top = startY - rise * ease + 'px';
+    el.style.opacity = 1 - p;
+    if (p < 1) requestAnimationFrame(animate);
+    else el.remove();
+  }
+  requestAnimationFrame(animate);
+}
+
+function loop(ts) {
+  detector.estimatePoses(video).then(poses => {
+    if (!poses.length) return requestAnimationFrame(loop);
+
+    const kp = poses[0].keypoints;
+
+    const lh = kp.find(p => p.name === 'left_hip');
+    const rh = kp.find(p => p.name === 'right_hip');
+    if (!lh || !rh || lh.score < 0.4 || rh.score < 0.4)
+      return requestAnimationFrame(loop);
+
+    const hipY = (lh.y + rh.y) / 2;
+
+    const le = kp.find(p => p.name === 'left_eye');
+    const re = kp.find(p => p.name === 'right_eye');
+    if (le && re && le.score > 0.4 && re.score > 0.4) {
+      const cx = (le.x + re.x) / 2;
+      const cy = (le.y + re.y) / 2;
+      const dx = re.x - le.x;
+      const dy = re.y - le.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      const w = dist * 2.8;
+      const mirroredX = window.innerWidth - cx;
+
+      glasses.style.width = w + 'px';
+      glasses.style.left = mirroredX - w / 2 + w * 0.08 + 'px';
+      glasses.style.top = cy - dist * 0.7 + 'px';
+    }
+
+    if (phase === 'PREP') {
+      if (baseY === null) baseY = hipY;
+      baseY = baseY * 0.95 + hipY * 0.05;
+      if (lastHipY !== null && Math.abs(hipY - lastHipY) < STABLE_DELTA)
+        stableFrames++;
+      else stableFrames = 0;
+      if (stableFrames >= STABLE_FRAMES_REQUIRED) {
+        phase = 'TEST';
+        text.innerText = 'Отлично 👍\nТеперь сделай 1 тестовый присед';
+        counterEl.style.display = 'block';
+        counterEl.innerText = 0;
+      }
+      lastHipY = hipY;
+      return requestAnimationFrame(loop);
+    }
+
+    if (state === 'UP' && hipY > baseY + DOWN_OFFSET) state = 'DOWN';
+    else if (state === 'DOWN' && hipY < baseY + UP_OFFSET) {
+      reps++;
+      counterEl.innerText = reps;
+      balance += COINS_PER_SQUAT;
+      document.getElementById('balance').innerText = balance;
+      spawnPlus(hipY);
+      if (phase === 'TEST') {
+        phase = 'TRAIN';
+        text.innerText = 'Отлично! Можешь продолжать тренировку 💪';
+      }
+      state = 'COOLDOWN';
+      cooldownTime = ts;
+    } else if (state === 'COOLDOWN' && ts - cooldownTime > COOLDOWN_MS) {
+      state = 'UP';
+    }
+
+    requestAnimationFrame(loop);
+  });
+}
+
+finishBtn.onclick = () => {
+  localStorage.setItem('balance', balance);
+  glasses.style.display = 'none';
+  training.style.display = 'none';
+  home.style.display = 'flex';
+};
+</script>
+</body>
+</html>
