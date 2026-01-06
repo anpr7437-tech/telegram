@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Workout Mini App</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+
+<style>
+body { margin:0; background:black; color:white; font-family:system-ui; overflow:hidden }
+video { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1) }
+#debug { position:fixed; inset:0; pointer-events:none; z-index:5 }
+#overlay { position:fixed; inset:0; display:flex; justify-content:center; align-items:center; pointer-events:none }
+#box { background:rgba(0,0,0,0.7); padding:24px; border-radius:20px; text-align:center }
+#text { font-size:24px; font-weight:800; white-space:pre-line }
+#counter { font-size:64px; display:none }
+</style>
+</head>
+
+<body>
+
+<video id="video" playsinline muted></video>
+<canvas id="debug"></canvas>
+
+<div id="overlay">
+  <div id="box">
+    <div id="text">Встань ровно и постой спокойно</div>
+    <div id="counter">0</div>
+  </div>
+</div>
+
+<script>
+const tg = window.Telegram.WebApp;
+tg.expand();
+
+/* ===== FPS ===== */
+const FPS = 8;
+const FRAME_INTERVAL = 1000 / FPS;
+
+/* ===== КАЛИБРОВКА ===== */
+const CALIBRATION_TIME = 3000;
+const HIP_STABLE_DELTA = 6;
+
+/* ===== ПРИСЕД (ПОД 8 FPS) ===== */
+const MIN_SQUAT_DEPTH = 35;
+const RETURN_THRESHOLD = 12;
+const MIN_DOWN_TIME = 300;
+
+/* ===== STATE ===== */
+let detector;
+let lastTs = 0;
+let baseY = null;
+let lastHipY = null;
+let stableSince = null;
+let phase = 'PREP';
+
+let reps = 0;
+let downStart = null;
+let minHipY = null;
+
+/* ===== DOM ===== */
+const video = document.getElementById('video');
+const canvas = document.getElementById('debug');
+const ctx = canvas.getContext('2d');
+const text = document.getElementById('text');
+const counter = document.getElementById('counter');
+
+navigator.mediaDevices.getUserMedia({ video:true }).then(s => {
+  video.srcObject = s;
+  video.play();
+});
+
+video.onplaying = async () => {
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  await tf.setBackend('cpu');
+  await tf.ready();
+
+  detector = await poseDetection.createDetector(
+    poseDetection.SupportedModels.MoveNet,
+    { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+  );
+
+  requestAnimationFrame(loop);
+};
+
+function draw(p) {
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+  ctx.fillStyle = 'red';
+  ctx.fill();
+}
+
+function loop(ts) {
+  if (ts - lastTs < FRAME_INTERVAL) return requestAnimationFrame(loop);
+  lastTs = ts;
+
+  detector.estimatePoses(video).then(poses => {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    if (!poses.length) return requestAnimationFrame(loop);
+
+    const kp = poses[0].keypoints;
+    const lh = kp.find(p => p.name === 'left_hip');
+    const rh = kp.find(p => p.name === 'right_hip');
+    if (!lh || !rh || lh.score < 0.4 || rh.score < 0.4)
+      return requestAnimationFrame(loop);
+
+    draw(lh); draw(rh);
+    const hipY = (lh.y + rh.y) / 2;
+
+    /* ===== PREP ===== */
+    if (phase === 'PREP') {
+      if (baseY === null) baseY = hipY;
+      baseY = baseY * 0.9 + hipY * 0.1;
+
+      if (lastHipY !== null && Math.abs(hipY - lastHipY) < HIP_STABLE_DELTA) {
+        if (!stableSince) stableSince = ts;
+        if (ts - stableSince >= CALIBRATION_TIME) {
+          phase = 'TEST';
+          text.innerText = 'Сделай 1 тестовый присед';
+          counter.style.display = 'block';
+        }
+      } else {
+        stableSince = null;
+      }
+
+      lastHipY = hipY;
+      return requestAnimationFrame(loop);
+    }
+
+    /* ===== TEST + TRAIN ===== */
+    if (downStart === null) {
+      if (hipY > baseY + 15) {
+        downStart = ts;
+        minHipY = hipY;
+      }
+    } else {
+      minHipY = Math.max(minHipY, hipY);
+
+      const depth = minHipY - baseY;
+
+      if (
+        depth >= MIN_SQUAT_DEPTH &&
+        hipY <= baseY + RETURN_THRESHOLD &&
+        ts - downStart >= MIN_DOWN_TIME
+      ) {
+        reps++;
+        counter.innerText = reps;
+
+        if (phase === 'TEST') {
+          phase = 'TRAIN';
+          text.innerText = 'Отлично! Можешь продолжать 💪';
+        }
+
+        downStart = null;
+        minHipY = null;
+      }
+    }
+
+    requestAnimationFrame(loop);
+  });
+}
+</script>
+
+</body>
+</html>
